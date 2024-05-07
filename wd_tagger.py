@@ -7,7 +7,7 @@ import huggingface_hub
 import pandas as pd
 import argparse
 from glob import glob
-from multiprocessing import Pool
+from multiprocessing import Pool, current_process
 from tqdm import tqdm
 import json
 
@@ -15,14 +15,15 @@ import json
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_path", type=str, default=".")
-    parser.add_argument("--num_processes", type=int, default=None)
+    parser.add_argument("--num_processes", type=int, default=1)
     parser.add_argument("--save_path", type=str, default=None)
     parser.add_argument("--rel_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--check_images", default=False, action="store_true")
     args = parser.parse_args()
 
     if args.save_path is None:
-        args.save_path = os.path.join(args.dataset_path, "prompts.json")
+        args.save_path = os.path.join(args.dataset_path, "wd_tagger.json")
     else:
         os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
 
@@ -105,6 +106,7 @@ class Predictor:
         resume_download=False,
         cache_dir=".cache",
         device="cuda",
+        device_id=0,
     ):
 
         os.makedirs(os.path.join(cache_dir, repo_path), exist_ok=True)
@@ -140,10 +142,14 @@ class Predictor:
 
         if device == "cpu":
             providers = None
+            provider_options = None
         else:
             providers = ["CUDAExecutionProvider"]
+            provider_options = [{"device_id": device_id}]
 
-        model = rt.InferenceSession(model_path, providers=providers)
+        model = rt.InferenceSession(
+            model_path, providers=providers, provider_options=provider_options
+        )
         _, height, width, _ = model.get_inputs()[0].shape
         self.model_target_size = height
 
@@ -235,11 +241,8 @@ class Predictor:
         return sorted_general_strings, rating, character_res, general_res
 
 
-predictor = Predictor()
-
-
 def gen_tags(image_path):
-
+    global predictor
     return predictor.predict(
         Image.open(image_path).convert("RGBA"),
         general_thresh=0.35,
@@ -253,6 +256,16 @@ def is_image(image_path):
     image_types = ["png", "jpg", ".peg", "gif", "webp", "bmp", "jpeg"]
     if image_path.split(".")[-1] not in image_types:
         return False
+    # try:
+    #     Image.open(image_path).convert("RGBA")
+    # except Exception:
+    #     print(f"Error opening {image_path}")
+    #     return False
+    else:
+        return True
+
+
+def is_valid_image(image_path):
     try:
         Image.open(image_path).convert("RGBA")
     except Exception:
@@ -262,26 +275,58 @@ def is_image(image_path):
         return True
 
 
+def init_subprocess(device):
+    global predictor
+    predictor = Predictor(device=device, device_id=current_process()._identity[0] - 1)
+
+
 if __name__ == "__main__":
     args = parse_args()
 
     image_paths = glob(f"{args.dataset_path}/**", recursive=True)
-
-    print("check images")
-    with Pool() as p:
-        results = list(tqdm(p.imap(is_image, image_paths), total=len(image_paths)))
-
-    image_paths = [image_paths[i] for i in range(len(image_paths)) if results[i]]
+    image_paths = [image_path for image_path in image_paths if is_image(image_path)]
+    
+    if args.check_images:
+        print("check images")
+        with Pool() as p:
+            results = list(
+                tqdm(p.imap(is_valid_image, image_paths), total=len(image_paths))
+            )
+        image_paths = [image_paths[i] for i in range(len(image_paths)) if results[i]]
 
     print(f"num images:{len(image_paths)}")
     print("gen tags")
-    with Pool(processes=args.num_processes) as p:
+    with Pool(
+        processes=args.num_processes,
+        initializer=init_subprocess,
+        initargs=(args.device,),
+    ) as p:
         results = list(tqdm(p.imap(gen_tags, image_paths), total=len(image_paths)))
 
     prompts = {}
+    if os.path.exists(args.save_path):
+        print(f"{args.save_path} exists")
+        with open(args.save_path, "r") as f:
+            json.load(prompts, f)
 
     for image_path, prompt in zip(image_paths, results):
-        prompts[os.path.relpath(image_path, args.rel_path)] = prompt
+        if os.path.relpath(image_path, args.rel_path) in prompts.keys():
+            if isinstance(prompts[os.path.relpath(image_path, args.rel_path)], str):
+                prompts[os.path.relpath(image_path, args.rel_path)] = [
+                    prompts[os.path.relpath(image_path, args.rel_path)],
+                    prompt,
+                ]
+            elif isinstance(prompts[os.path.relpath(image_path, args.rel_path)], list):
+                prompts[os.path.relpath(image_path, args.rel_path)] = prompts[
+                    os.path.relpath(image_path, args.rel_path)
+                ] + [prompt]
+            else:
+                print(
+                    f"invalid prompt type { os.path.relpath(image_path, args.rel_path)}:"
+                )
+                print(prompts[os.path.relpath(image_path, args.rel_path)])
+        else:
+            prompts[os.path.relpath(image_path, args.rel_path)] = prompt
 
     with open(args.save_path, "w") as f:
         json.dump(prompts, f, indent=4)
