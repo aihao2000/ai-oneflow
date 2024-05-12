@@ -189,10 +189,10 @@ class Predictor:
     def predict(
         self,
         image,
-        general_thresh,
-        general_mcut_enabled,
-        character_thresh,
-        character_mcut_enabled,
+        general_thresh=0.35,
+        general_mcut_enabled=False,
+        character_thresh=0.85,
+        character_mcut_enabled=False,
     ):
 
         image = self.prepare_image(image)
