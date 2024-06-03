@@ -1,3 +1,6 @@
 [submodule "submodules/photo2pixel"]
 	path = submodules/photo2pixel
 	url = git@github.com:Jzou44/photo2pixel.git
+[submodule "submodules/controlnet_aux"]
+	path = submodules/controlnet_aux
+	url = git@github.com:aihao2000/controlnet_aux.git
