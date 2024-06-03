@@ -20,6 +20,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_path", type=str, default=None)
     parser.add_argument("--rel_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--model_path", type=str, default="prs-eth/marigold-depth-lcm-v1-0"
+    )
     parser.add_argument("--check_images", default=False, action="store_true")
     args = parser.parse_args()
 
@@ -57,10 +60,10 @@ def is_valid_image(image_path):
         return True
 
 
-def init_subprocess():
+def init_subprocess(model_path):
     global pipe
     pipe = MarigoldDepthPipeline.from_pretrained(
-        "/mnt/nj-aigc/usr/aihao/workspace/deeplearning-content/models/prs-eth/marigold-lcm-v1-0",
+        model_path,
         torch_dtyoe=torch.float16,
     ).to(f"cuda:{(current_process()._identity[0] - 1)%8}")
 
@@ -94,5 +97,6 @@ if __name__ == "__main__":
     with Pool(
         processes=args.num_processes,
         initializer=init_subprocess,
+        initargs=(args.model_path,),
     ) as p:
         results = list(tqdm(p.imap(process, image_paths), total=len(image_paths)))
