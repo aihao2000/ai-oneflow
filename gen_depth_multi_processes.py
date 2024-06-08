@@ -20,22 +20,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_path", type=str, default=None)
     parser.add_argument("--rel_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--num_gpus", type=int, default=1)
     parser.add_argument(
         "--model_path", type=str, default="prs-eth/marigold-depth-lcm-v1-0"
     )
     parser.add_argument("--check_images", default=False, action="store_true")
     args = parser.parse_args()
 
-    if args.save_path is None:
-        args.save_path = os.path.join(args.dataset_path, "wd_tagger.json")
-    else:
-        os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
-
     if args.rel_path is None:
         args.rel_path = args.dataset_path
 
     return args
-
 
 def is_image(image_path):
     image_types = ["png", "jpg", ".peg", "gif", "webp", "bmp", "jpeg"]
@@ -60,12 +55,12 @@ def is_valid_image(image_path):
         return True
 
 
-def init_subprocess(model_path):
+def init_subprocess(model_path, num_gpus):
     global pipe
     pipe = MarigoldDepthPipeline.from_pretrained(
         model_path,
         torch_dtyoe=torch.float16,
-    ).to(f"cuda:{(current_process()._identity[0] - 1)%8}")
+    ).to(f"cuda:{(current_process()._identity[0] - 1)%num_gpus}")
 
     pipe.set_progress_bar_config(disable=True)
 
@@ -91,12 +86,16 @@ if __name__ == "__main__":
 
     image_paths = glob(f"{args.dataset_path}/**", recursive=True)
     image_paths = [image_path for image_path in image_paths if is_image(image_path)]
-
+    image_paths = [
+        image_path
+        for image_path in image_paths
+        if not os.path.exists(image_path.replace("imgs_unzip", "depths"))
+    ]
     print(f"num images:{len(image_paths)}")
     print("gen tags")
     with Pool(
         processes=args.num_processes,
         initializer=init_subprocess,
-        initargs=(args.model_path,),
+        initargs=(args.model_path, args.num_gpus),
     ) as p:
         results = list(tqdm(p.imap(process, image_paths), total=len(image_paths)))
