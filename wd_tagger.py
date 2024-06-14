@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rel_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--check_images", default=False, action="store_true")
+    parser.add_argument("--num_gpus", type=int, default=1)
     args = parser.parse_args()
 
     if args.save_path is None:
@@ -108,7 +109,6 @@ class Predictor:
         device="cuda",
         device_id=0,
     ):
-
         os.makedirs(os.path.join(cache_dir, repo_path), exist_ok=True)
 
         if (
@@ -194,7 +194,6 @@ class Predictor:
         character_thresh=0.85,
         character_mcut_enabled=False,
     ):
-
         image = self.prepare_image(image)
 
         input_name = self.model.get_inputs()[0].name
@@ -275,9 +274,11 @@ def is_valid_image(image_path):
         return True
 
 
-def init_subprocess(device):
+def init_subprocess(device, num_gpus):
     global predictor
-    predictor = Predictor(device=device, device_id=current_process()._identity[0] - 1)
+    predictor = Predictor(
+        device=device, device_id=(current_process()._identity[0] - 1) % num_gpus
+    )
 
 
 if __name__ == "__main__":
@@ -285,7 +286,7 @@ if __name__ == "__main__":
 
     image_paths = glob(f"{args.dataset_path}/**", recursive=True)
     image_paths = [image_path for image_path in image_paths if is_image(image_path)]
-    
+
     if args.check_images:
         print("check images")
         with Pool() as p:
@@ -299,7 +300,7 @@ if __name__ == "__main__":
     with Pool(
         processes=args.num_processes,
         initializer=init_subprocess,
-        initargs=(args.device,),
+        initargs=(args.device, args.num_gpus),
     ) as p:
         results = list(tqdm(p.imap(gen_tags, image_paths), total=len(image_paths)))
 
