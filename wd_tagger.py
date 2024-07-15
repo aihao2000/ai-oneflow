@@ -105,7 +105,7 @@ class Predictor:
         self,
         repo_path=SWINV2_MODEL_DSV3_REPO,
         resume_download=False,
-        cache_dir=".cache",
+        cache_dir=f"{os.environ['HOME']}/.cache/ai-oneflow",
         device="cuda",
         device_id=0,
     ):
