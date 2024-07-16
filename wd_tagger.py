@@ -1,7 +1,7 @@
 import numpy as np
 import onnxruntime as rt
 import argparse
-from PIL import Image
+from PIL import Image, ImageFile
 import os
 import huggingface_hub
 import pandas as pd
@@ -10,6 +10,8 @@ from glob import glob
 from multiprocessing import Pool, current_process
 from tqdm import tqdm
 import json
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 def parse_args() -> argparse.Namespace:
@@ -305,29 +307,9 @@ if __name__ == "__main__":
         results = list(tqdm(p.imap(gen_tags, image_paths), total=len(image_paths)))
 
     prompts = {}
-    if os.path.exists(args.save_path):
-        print(f"{args.save_path} exists")
-        with open(args.save_path, "r") as f:
-            json.load(prompts, f)
 
     for image_path, prompt in zip(image_paths, results):
-        if os.path.relpath(image_path, args.rel_path) in prompts.keys():
-            if isinstance(prompts[os.path.relpath(image_path, args.rel_path)], str):
-                prompts[os.path.relpath(image_path, args.rel_path)] = [
-                    prompts[os.path.relpath(image_path, args.rel_path)],
-                    prompt,
-                ]
-            elif isinstance(prompts[os.path.relpath(image_path, args.rel_path)], list):
-                prompts[os.path.relpath(image_path, args.rel_path)] = prompts[
-                    os.path.relpath(image_path, args.rel_path)
-                ] + [prompt]
-            else:
-                print(
-                    f"invalid prompt type { os.path.relpath(image_path, args.rel_path)}:"
-                )
-                print(prompts[os.path.relpath(image_path, args.rel_path)])
-        else:
-            prompts[os.path.relpath(image_path, args.rel_path)] = prompt
+        prompts[os.path.relpath(image_path, args.rel_path)] = prompt
 
     with open(args.save_path, "w") as f:
         json.dump(prompts, f, indent=4)
