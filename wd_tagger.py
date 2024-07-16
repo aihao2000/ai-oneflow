@@ -103,7 +103,7 @@ def mcut_threshold(probs):
 class Predictor:
     def __init__(
         self,
-        repo_path=SWINV2_MODEL_DSV3_REPO,
+        repo_path=VIT_MODEL_DSV3_REPO,
         resume_download=False,
         cache_dir=f"{os.environ['HOME']}/.cache/ai-oneflow",
         device="cuda",
