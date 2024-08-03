@@ -17,7 +17,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_path", type=str, default=".")
-    parser.add_argument("--num_processes", type=int, default=1)
     parser.add_argument("--save_path", type=str, default=None)
     args = parser.parse_args()
 
