@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
 
     if args.save_path is None:
-        args.save_path = os.path.join(args.dataset_path, "wd_tagger.json")
+        args.save_path = os.path.join(args.dataset_path, "wd_tags.json")
     else:
         os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
 
