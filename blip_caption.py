@@ -18,6 +18,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_path", type=str, default=".")
+    parser.add_argument("--resume", default=False, action="store_true")
     parser.add_argument("--num_processes", type=int, default=1)
     parser.add_argument("--save_path", type=str, default=None)
     parser.add_argument("--rel_path", type=str, default=None)
@@ -83,7 +84,17 @@ if __name__ == "__main__":
 
     image_paths = glob(f"{args.dataset_path}/**", recursive=True)
     image_paths = [image_path for image_path in image_paths if is_image(image_path)]
+    if args.resume:
+        with open(args.save_path, "r") as f:
+            prompts = json.load(f)
 
+        image_paths = [
+            image_path
+            for image_path in image_paths
+            if os.path.relpath(image_path, args.rel_path) not in prompts.keys()
+        ]
+    else:
+        prompts = {}
     print(f"num images:{len(image_paths)}")
     print("gen tags")
     with Pool(
@@ -92,8 +103,6 @@ if __name__ == "__main__":
         initargs=(args.model_path, args.num_gpus),
     ) as p:
         results = list(tqdm(p.imap(gen_captions, image_paths), total=len(image_paths)))
-
-    prompts = {}
 
     for image_path, prompt in zip(image_paths, results):
         prompts[os.path.relpath(image_path, args.rel_path)] = prompt
