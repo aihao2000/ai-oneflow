@@ -4,12 +4,13 @@ import argparse
 from PIL import Image, ImageFile
 import os
 import huggingface_hub
+import pandas as pd
 import argparse
 from glob import glob
 from multiprocessing import Pool, current_process
 from tqdm import tqdm
 import json
-from transformers import Blip2Processor, Blip2ForConditionalGeneration
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -18,35 +19,61 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_path", type=str, default=".")
-    parser.add_argument("--resume", default=False, action="store_true")
     parser.add_argument("--num_processes", type=int, default=1)
     parser.add_argument("--save_path", type=str, default=None)
-    parser.add_argument("--rel_path", type=str, default=None)
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--num_gpus", type=int, default=1)
     args = parser.parse_args()
 
     if args.save_path is None:
-        args.save_path = os.path.join(args.dataset_path, "blip2_captions.json")
+        args.save_path = os.path.join(args.dataset_path, "wartermark_image_paths.txt")
     else:
         os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
-
-    if args.rel_path is None:
-        args.rel_path = args.dataset_path
 
     return args
 
 
-def gen_captions(image_path):
+def vqa(
+    tokenizer,
+    model,
+    image,
+    query="Describe the character in the picture as concisely as possible.",
+):
+    inputs = tokenizer.apply_chat_template(
+        [{"role": "user", "image": image, "content": query}],
+        add_generation_prompt=True,
+        tokenize=True,
+        return_tensors="pt",
+        return_dict=True,
+    ).to(
+        model.device
+    )  # chat mod
+    gen_kwargs = {
+        "max_length": 1000,
+        "do_sample": True,
+        "top_k": 1,
+        "no_repeat_ngram_size": 5,
+    }
+    with torch.no_grad():
+        outputs = model.generate(**inputs, **gen_kwargs)
+        outputs = outputs[:, inputs["input_ids"].shape[1] :]
+        response = tokenizer.decode(outputs[0])
+        response = response.split("<|endoftext|>")[0]
+
+    return response
+
+
+def image_watermark_check(image_path):
     global model
-    global processor
+    global tokenizer
     image = Image.open(image_path)
-    inputs = processor(image, return_tensors="pt").to(model.device, torch.float16)
-    generated_ids = model.generate(**inputs)
-    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[
-        0
-    ].strip()
-    return generated_text
+    response = vqa(
+        tokenizer,
+        model,
+        image,
+        "Does this image have any watermarks or trademarks? Please reply yes or no.",
+    ).lower()
+    return "yes" in response
 
 
 def is_image(image_path):
@@ -74,12 +101,19 @@ def is_valid_image(image_path):
 
 def init_subprocess(model_path, num_gpus):
     global model
-    global processor
-    processor = Blip2Processor.from_pretrained(model_path)
-    model = Blip2ForConditionalGeneration.from_pretrained(
+    global tokenizer
+    model = (
+        AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
+        .to(f"cuda:{(current_process()._identity[0] - 1) % num_gpus}")
+        .eval()
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
         model_path,
-        torch_dtype=torch.float16,
-        device_map=f"cuda:{(current_process()._identity[0] - 1) % num_gpus}",
+        trust_remote_code=True,
     )
 
 
@@ -88,17 +122,7 @@ if __name__ == "__main__":
 
     image_paths = glob(f"{args.dataset_path}/**", recursive=True)
     image_paths = [image_path for image_path in image_paths if is_image(image_path)]
-    if args.resume:
-        with open(args.save_path, "r") as f:
-            prompts = json.load(f)
 
-        image_paths = [
-            image_path
-            for image_path in image_paths
-            if os.path.relpath(image_path, args.rel_path) not in prompts.keys()
-        ]
-    else:
-        prompts = {}
     print(f"num images:{len(image_paths)}")
     print("gen tags")
     with Pool(
@@ -106,10 +130,15 @@ if __name__ == "__main__":
         initializer=init_subprocess,
         initargs=(args.model_path, args.num_gpus),
     ) as p:
-        results = list(tqdm(p.imap(gen_captions, image_paths), total=len(image_paths)))
+        results = list(
+            tqdm(p.imap(image_watermark_check, image_paths), total=len(image_paths))
+        )
 
-    for image_path, prompt in zip(image_paths, results):
-        prompts[os.path.relpath(image_path, args.rel_path)] = prompt
+    watermark_image_paths = []
+
+    for image_path, result in zip(image_paths, results):
+        if result:
+            watermark_image_paths.append(image_path + "\n")
 
     with open(args.save_path, "w") as f:
-        json.dump(prompts, f, indent=4)
+        f.writelines(watermark_image_paths)
