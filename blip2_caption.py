@@ -17,7 +17,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path", type=str, default=".")
+    parser.add_argument("--dataset_path", nargs="+", type=str, default=".")
     parser.add_argument("--resume", default=False, action="store_true")
     parser.add_argument("--num_processes", type=int, default=1)
     parser.add_argument("--save_path", type=str, default=None)
@@ -41,7 +41,7 @@ def gen_captions(image_path):
     global model
     global processor
     image = Image.open(image_path)
-    inputs = processor(image, return_tensors="pt").to(model.device, torch.float16)
+    inputs = processor(image, return_tensors="pt").to(model.device)
     generated_ids = model.generate(**inputs)
     generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[
         0
@@ -78,15 +78,24 @@ def init_subprocess(model_path, num_gpus):
     processor = Blip2Processor.from_pretrained(model_path)
     model = Blip2ForConditionalGeneration.from_pretrained(
         model_path,
-        torch_dtype=torch.float16,
         device_map=f"cuda:{(current_process()._identity[0] - 1) % num_gpus}",
     )
 
 
 if __name__ == "__main__":
     args = parse_args()
+    if isinstance(args.dataset_path, list):
+        print(
+            args.dataset_path,
+        )
+        image_paths = []
+        for single_dataset_path in args.dataset_path:
+            image_paths = image_paths + glob(
+                f"{single_dataset_path}/**", recursive=True
+            )
+    else:
+        image_paths = glob(f"{args.dataset_path}/**", recursive=True)
 
-    image_paths = glob(f"{args.dataset_path}/**", recursive=True)
     image_paths = [image_path for image_path in image_paths if is_image(image_path)]
     if args.resume:
         with open(args.save_path, "r") as f:
